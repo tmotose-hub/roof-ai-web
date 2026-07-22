@@ -19,7 +19,7 @@ if uploaded:
             }
             
             # FastAPIに画像を送信
-            response = requests.post("http://127.0.0.1:8000/predict", files=files)
+            response = requests.post("https://roof-ai-5-demo.onrender.com/predict", files=files)
             
             # 結果を表示
             if response.status_code == 200:
