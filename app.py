@@ -11,6 +11,45 @@ st.title("🏠 屋根コケ診断AI")
 EC2_IP = "32.237.56.147"
 API_URL = f"http://{EC2_IP}:8000/predict"
 
+
+def overlay_mask_on_image(
+    base_image,
+    mask_image,
+    color=(255, 0, 0),
+    alpha=0.5
+):
+    """
+    元画像にマスク画像を半透明色で重ねる。
+    mask_imageはグレースケール（白=検出領域、黒=背景）を想定。
+    すでにRGBAで透過情報を持つマスクの場合は
+    そのままalpha_compositeするだけでOK。
+    """
+
+    base = base_image.convert("RGBA")
+
+    # マスクのサイズを元画像に合わせる
+    mask_resized = mask_image.convert("L").resize(base.size)
+
+    # 指定カラーの単色レイヤーを作成
+    color_layer = Image.new(
+        "RGBA",
+        base.size,
+        color + (0,)
+    )
+
+    # マスクの明るさ×alphaを透明度として適用
+    # （検出領域が強いほど濃く色がつく）
+    alpha_mask = mask_resized.point(
+        lambda p: int(p * alpha)
+    )
+    color_layer.putalpha(alpha_mask)
+
+    # 元画像とカラーレイヤーを合成
+    combined = Image.alpha_composite(base, color_layer)
+
+    return combined.convert("RGB")
+
+
 uploaded = st.file_uploader(
     "画像を選択してください",
     type=["jpg", "jpeg", "png"]
@@ -111,7 +150,36 @@ if uploaded:
                         )
 
                         # =========================
-                        # 元画像＋マスクを横並び
+                        # 元画像＋マスクを半透明オーバーレイ表示
+                        # =========================
+
+                        st.subheader(
+                            "元画像＋AIマスク（オーバーレイ）"
+                        )
+
+                        overlay_alpha = st.slider(
+                            "マスクの濃さ",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.5,
+                            step=0.05
+                        )
+
+                        overlay_image = overlay_mask_on_image(
+                            image,
+                            mask_image,
+                            color=(255, 0, 0),
+                            alpha=overlay_alpha
+                        )
+
+                        st.image(
+                            overlay_image,
+                            caption="コケ検出領域を赤色半透明で重ねた画像",
+                            use_container_width=True
+                        )
+
+                        # =========================
+                        # 元画像とAIマスクを横並び
                         # =========================
 
                         st.subheader(
