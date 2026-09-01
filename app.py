@@ -1,4 +1,4 @@
-from PIL import Image
+from PIL import Image, ImageOps
 import requests
 import streamlit as st
 import base64
@@ -16,35 +16,35 @@ def overlay_mask_on_image(
     base_image,
     mask_image,
     color=(255, 0, 0),
-    alpha=0.5
+    alpha=0.5,
+    invert=True
 ):
     """
-    元画像にマスク画像を半透明色で重ねる。
-    mask_imageはグレースケール（白=検出領域、黒=背景）を想定。
-    すでにRGBAで透過情報を持つマスクの場合は
-    そのままalpha_compositeするだけでOK。
+    元画像にマスク画像を半透明色で重ねて1枚の画像にする。
+
+    invert=True の場合、
+    「黒=検出領域（コケ）、白=背景」というマスク形式を想定し、
+    反転してから色を乗せる。
     """
 
     base = base_image.convert("RGBA")
 
-    # マスクのサイズを元画像に合わせる
     mask_resized = mask_image.convert("L").resize(base.size)
 
-    # 指定カラーの単色レイヤーを作成
+    if invert:
+        mask_resized = ImageOps.invert(mask_resized)
+
     color_layer = Image.new(
         "RGBA",
         base.size,
         color + (0,)
     )
 
-    # マスクの明るさ×alphaを透明度として適用
-    # （検出領域が強いほど濃く色がつく）
     alpha_mask = mask_resized.point(
         lambda p: int(p * alpha)
     )
     color_layer.putalpha(alpha_mask)
 
-    # 元画像とカラーレイヤーを合成
     combined = Image.alpha_composite(base, color_layer)
 
     return combined.convert("RGB")
@@ -117,14 +117,13 @@ if uploaded:
                     )
 
                     # =========================
-                    # AIマスク表示
+                    # 元画像にマスクを重ねて表示
                     # =========================
 
                     if "mask_image" in result:
 
                         mask_data = result["mask_image"]
 
-                        # data:image/png;base64,... を除去
                         if "," in mask_data:
                             mask_data = mask_data.split(
                                 ",",
@@ -140,50 +139,41 @@ if uploaded:
                         )
 
                         st.subheader(
-                            "AI検出マスク"
+                            "AI検出結果"
                         )
 
-                        st.image(
-                            mask_image,
-                            caption="AIがコケと判定した領域",
-                            use_container_width=True
-                        )
+                        col_a, col_b = st.columns(2)
 
-                        # =========================
-                        # 元画像＋マスクを半透明オーバーレイ表示
-                        # =========================
+                        with col_a:
+                            overlay_alpha = st.slider(
+                                "マスクの濃さ",
+                                min_value=0.0,
+                                max_value=1.0,
+                                value=0.5,
+                                step=0.05
+                            )
 
-                        st.subheader(
-                            "元画像＋AIマスク（オーバーレイ）"
-                        )
-
-                        overlay_alpha = st.slider(
-                            "マスクの濃さ",
-                            min_value=0.0,
-                            max_value=1.0,
-                            value=0.5,
-                            step=0.05
-                        )
+                        with col_b:
+                            invert_mask = st.checkbox(
+                                "マスクを反転する"
+                                "（黒=検出領域の場合はON）",
+                                value=True
+                            )
 
                         overlay_image = overlay_mask_on_image(
                             image,
                             mask_image,
                             color=(255, 0, 0),
-                            alpha=overlay_alpha
-                        )
-
-                        st.image(
-                            overlay_image,
-                            caption="コケ検出領域を赤色半透明で重ねた画像",
-                            use_container_width=True
+                            alpha=overlay_alpha,
+                            invert=invert_mask
                         )
 
                         # =========================
-                        # 元画像とAIマスクを横並び
+                        # 元画像とオーバーレイ画像を横並び比較
                         # =========================
 
                         st.subheader(
-                            "元画像とAIマスクの比較"
+                            "元画像とAI検出結果の比較"
                         )
 
                         col1, col2 = st.columns(2)
@@ -197,8 +187,16 @@ if uploaded:
 
                         with col2:
                             st.image(
+                                overlay_image,
+                                caption="AI検出結果（コケ領域を赤色で表示）",
+                                use_container_width=True
+                            )
+
+                        # 生のマスクは折りたたみで確認用に残す
+                        with st.expander("AIマスク単体を見る"):
+                            st.image(
                                 mask_image,
-                                caption="AIマスク",
+                                caption="AIマスク（生データ）",
                                 use_container_width=True
                             )
 
