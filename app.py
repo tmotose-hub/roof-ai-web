@@ -7,7 +7,7 @@ import io
 st.set_page_config(page_title="屋根コケ診断AI")
 st.title("🏠 屋根コケ診断AI")
 
-# 🔗 EC2のFastAPIサーバーURL
+# EC2のFastAPIサーバー
 EC2_IP = "32.237.56.147"
 API_URL = f"http://{EC2_IP}:8000/predict"
 
@@ -17,14 +17,19 @@ uploaded = st.file_uploader(
 )
 
 if uploaded:
-    image = Image.open(uploaded)
-    st.image(image, use_container_width=True)
+
+    image = Image.open(uploaded).convert("RGB")
+
+    st.subheader("元画像")
+    st.image(
+        image,
+        use_container_width=True
+    )
 
     if st.button("AI診断開始"):
 
         with st.spinner("AI解析中..."):
 
-            # ファイルデータを作成
             files = {
                 "file": (
                     uploaded.name,
@@ -35,14 +40,12 @@ if uploaded:
 
             try:
 
-                # EC2上のFastAPIへ画像を送信
                 response = requests.post(
                     API_URL,
                     files=files,
-                    timeout=30
+                    timeout=60
                 )
 
-                # 結果を表示
                 if response.status_code == 200:
 
                     result = response.json()
@@ -50,7 +53,7 @@ if uploaded:
                     st.success("解析が完了しました！")
 
                     # =========================
-                    # メトリクス表示
+                    # 診断結果
                     # =========================
 
                     col1, col2 = st.columns(2)
@@ -70,22 +73,25 @@ if uploaded:
                     )
 
                     st.info(
-                        f"**診断コメント:** {result['comment']}"
+                        f"**診断コメント:** "
+                        f"{result['comment']}"
                     )
 
                     # =========================
-                    # マスク画像表示
+                    # AIマスク表示
                     # =========================
 
                     if "mask_image" in result:
 
                         mask_data = result["mask_image"]
 
-                        # data:image/png;base64, の部分を削除
+                        # data:image/png;base64,... を除去
                         if "," in mask_data:
-                            mask_data = mask_data.split(",", 1)[1]
+                            mask_data = mask_data.split(
+                                ",",
+                                1
+                            )[1]
 
-                        # Base64 → PNG画像
                         mask_bytes = base64.b64decode(
                             mask_data
                         )
@@ -94,41 +100,53 @@ if uploaded:
                             io.BytesIO(mask_bytes)
                         )
 
-                        st.subheader("🔍 コケ検出マスク")
+                        st.subheader(
+                            "AI検出マスク"
+                        )
 
                         st.image(
                             mask_image,
-                            caption="AIが検出したコケ領域",
+                            caption="AIがコケと判定した領域",
                             use_container_width=True
                         )
 
-                    else:
+                        # =========================
+                        # 元画像＋マスクを横並び
+                        # =========================
 
-                        st.warning(
-                            "マスク画像がAPIから返されていません。"
+                        st.subheader(
+                            "元画像とAIマスクの比較"
                         )
+
+                        col1, col2 = st.columns(2)
+
+                        with col1:
+                            st.image(
+                                image,
+                                caption="元画像",
+                                use_container_width=True
+                            )
+
+                        with col2:
+                            st.image(
+                                mask_image,
+                                caption="AIマスク",
+                                use_container_width=True
+                            )
 
                 else:
 
                     st.error(
-                        f"エラーが発生しました。"
-                        f"(ステータスコード: {response.status_code})\n"
-                        "FastAPIサーバーが起動しているか確認してください。"
+                        f"APIエラー："
+                        f"{response.status_code}\n\n"
+                        f"{response.text}"
                     )
 
             except requests.exceptions.RequestException as e:
 
                 st.error(
-                    f"サーバーに接続できませんでした。\n"
+                    "サーバーに接続できませんでした。\n"
                     f"IPアドレス（{EC2_IP}）や"
-                    f"セキュリティグループ（8000番ポート）の"
-                    f"設定を確認してください。\n"
-                    f"詳細: {e}"
-                )
-
-            except Exception as e:
-
-                st.error(
-                    f"マスク画像の表示中にエラーが発生しました。\n"
+                    f"8000番ポートを確認してください。\n\n"
                     f"詳細: {e}"
                 )
