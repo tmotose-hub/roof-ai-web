@@ -50,169 +50,154 @@ def overlay_mask_on_image(
     return combined.convert("RGB")
 
 
-uploaded = st.file_uploader(
-    "画像を選択してください",
-    type=["jpg", "jpeg", "png"]
+def diagnose_image(image_bytes, filename, content_type):
+    """1枚分をAPIに送信して結果を取得する"""
+
+    files = {
+        "file": (
+            filename,
+            image_bytes,
+            content_type
+        )
+    }
+
+    response = requests.post(
+        API_URL,
+        files=files,
+        timeout=60
+    )
+
+    return response
+
+
+uploaded_files = st.file_uploader(
+    "画像を選択してください（複数選択可）",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
 )
 
-if uploaded:
+if uploaded_files:
 
-    image = Image.open(uploaded).convert("RGB")
+    st.write(f"{len(uploaded_files)}枚の画像が選択されています")
 
-    st.subheader("元画像")
-    st.image(
-        image,
-        use_container_width=True
+    overlay_alpha = st.slider(
+        "マスクの濃さ",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.5,
+        step=0.05
+    )
+
+    invert_mask = st.checkbox(
+        "マスクを反転する（黒=検出領域の場合はON）",
+        value=True
     )
 
     if st.button("AI診断開始"):
 
-        with st.spinner("AI解析中..."):
+        for uploaded in uploaded_files:
 
-            files = {
-                "file": (
-                    uploaded.name,
-                    uploaded.getvalue(),
-                    uploaded.type
-                )
-            }
+            st.divider()
+            st.subheader(f"📷 {uploaded.name}")
 
-            try:
+            image = Image.open(uploaded).convert("RGB")
 
-                response = requests.post(
-                    API_URL,
-                    files=files,
-                    timeout=60
-                )
+            with st.spinner("AI解析中..."):
 
-                if response.status_code == 200:
+                try:
 
-                    result = response.json()
-
-                    st.success("解析が完了しました！")
-
-                    # =========================
-                    # 診断結果
-                    # =========================
-
-                    col1, col2 = st.columns(2)
-
-                    col1.metric(
-                        "コケ率",
-                        f"{result['moss_ratio']}%"
+                    response = diagnose_image(
+                        uploaded.getvalue(),
+                        uploaded.name,
+                        uploaded.type
                     )
 
-                    col2.metric(
-                        "スコア",
-                        f"{result['score']}点"
-                    )
+                    if response.status_code == 200:
 
-                    st.subheader(
-                        f"ランク：{result['rank']}"
-                    )
-
-                    st.info(
-                        f"**診断コメント:** "
-                        f"{result['comment']}"
-                    )
-
-                    # =========================
-                    # 元画像にマスクを重ねて表示
-                    # =========================
-
-                    if "mask_image" in result:
-
-                        mask_data = result["mask_image"]
-
-                        if "," in mask_data:
-                            mask_data = mask_data.split(
-                                ",",
-                                1
-                            )[1]
-
-                        mask_bytes = base64.b64decode(
-                            mask_data
-                        )
-
-                        mask_image = Image.open(
-                            io.BytesIO(mask_bytes)
-                        )
-
-                        st.subheader(
-                            "AI検出結果"
-                        )
-
-                        col_a, col_b = st.columns(2)
-
-                        with col_a:
-                            overlay_alpha = st.slider(
-                                "マスクの濃さ",
-                                min_value=0.0,
-                                max_value=1.0,
-                                value=0.5,
-                                step=0.05
-                            )
-
-                        with col_b:
-                            invert_mask = st.checkbox(
-                                "マスクを反転する"
-                                "（黒=検出領域の場合はON）",
-                                value=True
-                            )
-
-                        overlay_image = overlay_mask_on_image(
-                            image,
-                            mask_image,
-                            color=(255, 0, 0),
-                            alpha=overlay_alpha,
-                            invert=invert_mask
-                        )
+                        result = response.json()
 
                         # =========================
-                        # 元画像とオーバーレイ画像を横並び比較
+                        # 診断結果
                         # =========================
-
-                        st.subheader(
-                            "元画像とAI検出結果の比較"
-                        )
 
                         col1, col2 = st.columns(2)
 
-                        with col1:
-                            st.image(
+                        col1.metric(
+                            "コケ率",
+                            f"{result['moss_ratio']}%"
+                        )
+
+                        col2.metric(
+                            "スコア",
+                            f"{result['score']}点"
+                        )
+
+                        st.write(f"**ランク：{result['rank']}**")
+
+                        st.info(
+                            f"**診断コメント:** "
+                            f"{result['comment']}"
+                        )
+
+                        # =========================
+                        # 元画像 と 元画像＋AIマスク の比較
+                        # =========================
+
+                        if "mask_image" in result:
+
+                            mask_data = result["mask_image"]
+
+                            if "," in mask_data:
+                                mask_data = mask_data.split(
+                                    ",",
+                                    1
+                                )[1]
+
+                            mask_bytes = base64.b64decode(
+                                mask_data
+                            )
+
+                            mask_image = Image.open(
+                                io.BytesIO(mask_bytes)
+                            )
+
+                            overlay_image = overlay_mask_on_image(
                                 image,
-                                caption="元画像",
-                                use_container_width=True
-                            )
-
-                        with col2:
-                            st.image(
-                                overlay_image,
-                                caption="AI検出結果（コケ領域を赤色で表示）",
-                                use_container_width=True
-                            )
-
-                        # 生のマスクは折りたたみで確認用に残す
-                        with st.expander("AIマスク単体を見る"):
-                            st.image(
                                 mask_image,
-                                caption="AIマスク（生データ）",
-                                use_container_width=True
+                                color=(255, 0, 0),
+                                alpha=overlay_alpha,
+                                invert=invert_mask
                             )
 
-                else:
+                            col_a, col_b = st.columns(2)
+
+                            with col_a:
+                                st.image(
+                                    image,
+                                    caption="元画像",
+                                    use_container_width=True
+                                )
+
+                            with col_b:
+                                st.image(
+                                    overlay_image,
+                                    caption="元画像＋AIマスク（オーバーレイ）",
+                                    use_container_width=True
+                                )
+
+                    else:
+
+                        st.error(
+                            f"APIエラー："
+                            f"{response.status_code}\n\n"
+                            f"{response.text}"
+                        )
+
+                except requests.exceptions.RequestException as e:
 
                     st.error(
-                        f"APIエラー："
-                        f"{response.status_code}\n\n"
-                        f"{response.text}"
+                        "サーバーに接続できませんでした。\n"
+                        f"IPアドレス（{EC2_IP}）や"
+                        f"8000番ポートを確認してください。\n\n"
+                        f"詳細: {e}"
                     )
-
-            except requests.exceptions.RequestException as e:
-
-                st.error(
-                    "サーバーに接続できませんでした。\n"
-                    f"IPアドレス（{EC2_IP}）や"
-                    f"8000番ポートを確認してください。\n\n"
-                    f"詳細: {e}"
-                )
