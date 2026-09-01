@@ -28,8 +28,9 @@ st.title("🏠 屋根コケ診断AI")
 EC2_IP = "32.237.56.147"
 API_URL = f"http://{EC2_IP}:8000/predict"
 
-# 日本語フォント登録（環境にIPAexフォント等がある場合のみ有効）
-# 無ければ標準フォントにフォールバックする
+# PDFに埋め込む画像の最大幅（px）。大きいほど重くなる
+PDF_IMAGE_MAX_WIDTH = 1000
+
 JP_FONT_NAME = "Helvetica"
 try:
     pdfmetrics.registerFont(
@@ -47,14 +48,6 @@ def overlay_mask_on_image(
     alpha=0.5,
     invert=True
 ):
-    """
-    元画像にマスク画像を半透明色で重ねて1枚の画像にする。
-
-    invert=True の場合、
-    「黒=検出領域（コケ）、白=背景」というマスク形式を想定し、
-    反転してから色を乗せる。
-    """
-
     base = base_image.convert("RGBA")
 
     mask_resized = mask_image.convert("L").resize(base.size)
@@ -79,8 +72,6 @@ def overlay_mask_on_image(
 
 
 def diagnose_image(image_bytes, filename, content_type):
-    """1枚分をAPIに送信して結果を取得する"""
-
     files = {
         "file": (
             filename,
@@ -98,14 +89,36 @@ def diagnose_image(image_bytes, filename, content_type):
     return response
 
 
+def resize_for_pdf(pil_image, max_width=PDF_IMAGE_MAX_WIDTH):
+    """PDF埋め込み前に画像を縮小して負荷を下げる"""
+
+    if pil_image.width <= max_width:
+        return pil_image
+
+    ratio = max_width / pil_image.width
+    new_size = (
+        max_width,
+        int(pil_image.height * ratio)
+    )
+
+    return pil_image.resize(new_size, Image.LANCZOS)
+
+
 def pil_to_rl_image(pil_image, max_width_mm=80):
-    """PIL画像をreportlab用のImageフローアブルに変換"""
+    """PIL画像をreportlab用のImageフローアブルに変換（縮小＋圧縮込み）"""
+
+    small_image = resize_for_pdf(pil_image)
 
     buf = io.BytesIO()
-    pil_image.save(buf, format="PNG")
+    small_image.save(
+        buf,
+        format="JPEG",
+        quality=80,
+        optimize=True
+    )
     buf.seek(0)
 
-    w, h = pil_image.size
+    w, h = small_image.size
     max_width = max_width_mm * mm
     scale = max_width / w
     display_w = max_width
@@ -115,22 +128,6 @@ def pil_to_rl_image(pil_image, max_width_mm=80):
 
 
 def build_pdf_report(results):
-    """
-    results: [
-        {
-            "filename": str,
-            "moss_ratio": float,
-            "score": float,
-            "rank": str,
-            "comment": str,
-            "original_image": PIL.Image,
-            "overlay_image": PIL.Image,
-        },
-        ...
-    ]
-    を受け取り、PDFのバイト列を返す。
-    """
-
     buf = io.BytesIO()
 
     doc = SimpleDocTemplate(
@@ -164,7 +161,6 @@ def build_pdf_report(results):
 
     story = []
 
-    # 表紙
     story.append(
         Paragraph("屋根コケ点検レポート", title_style)
     )
@@ -191,7 +187,6 @@ def build_pdf_report(results):
         )
         story.append(Spacer(1, 4))
 
-        # 診断結果テーブル
         table_data = [
             ["コケ率", f"{r['moss_ratio']}%"],
             ["スコア", f"{r['score']}点"],
@@ -219,7 +214,6 @@ def build_pdf_report(results):
         story.append(table)
         story.append(Spacer(1, 8))
 
-        # 元画像／オーバーレイ画像を横に並べる
         img_table = Table(
             [[
                 pil_to_rl_image(r["original_image"]),
@@ -283,7 +277,6 @@ if uploaded_files:
 
     if st.button("AI診断開始"):
 
-        # PDFレポート用に結果を貯めておく
         all_results = []
 
         for uploaded in uploaded_files:
@@ -370,7 +363,6 @@ if uploaded_files:
                                     use_container_width=True
                                 )
 
-                        # PDF出力用に結果を保存
                         all_results.append({
                             "filename": uploaded.name,
                             "moss_ratio": result["moss_ratio"],
@@ -398,20 +390,33 @@ if uploaded_files:
                         f"詳細: {e}"
                     )
 
-        # =========================
-        # PDFレポート出力
-        # =========================
+        # 診断結果をセッションに保存
+        # （ページ再実行してもPDFボタンが機能するように）
+        st.session_state["diagnosis_results"] = all_results
 
-        if all_results:
+    # =========================
+    # PDFレポート出力（ボタンで明示的に実行）
+    # =========================
 
-            st.divider()
-            st.subheader("📄 点検結果レポート")
+    if st.session_state.get("diagnosis_results"):
 
-            pdf_bytes = build_pdf_report(all_results)
+        st.divider()
+        st.subheader("📄 点検結果レポート")
+
+        if st.button("PDFレポートを作成"):
+
+            with st.spinner("PDFを作成中..."):
+                pdf_bytes = build_pdf_report(
+                    st.session_state["diagnosis_results"]
+                )
+
+            st.session_state["pdf_bytes"] = pdf_bytes
+
+        if st.session_state.get("pdf_bytes"):
 
             st.download_button(
                 label="PDFレポートをダウンロード",
-                data=pdf_bytes,
+                data=st.session_state["pdf_bytes"],
                 file_name=(
                     "roof_inspection_report_"
                     f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
